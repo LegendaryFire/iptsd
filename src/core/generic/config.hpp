@@ -51,6 +51,11 @@ public:
 	f64 contacts_aspect_min = 1;
 	f64 contacts_aspect_max = 2.5;
 
+	// [MultiTouch]
+	f64 multitouch_neutral_value = 0;
+	f64 multitouch_activation_threshold = 40;
+	f64 multitouch_deactivation_threshold = 36;
+
 	// [Stylus]
 	bool stylus_disable = false;
 	f64 stylus_tip_distance = 0;
@@ -77,12 +82,11 @@ public:
 	{
 		contacts::Config<f64> config {};
 
-		const f64 athresh = this->contacts_activation_threshold;
-		const f64 dthresh = this->contacts_deactivation_threshold;
-
 		config.detection.normalize = true;
-		config.detection.activation_threshold = athresh / 255.0;
-		config.detection.deactivation_threshold = dthresh / 255.0;
+		config.detection.contacts_activation_threshold = this->contacts_activation_threshold / 255.0;
+		config.detection.contacts_deactivation_threshold = this->contacts_deactivation_threshold / 255.0;
+		config.detection.multitouch_activation_threshold = this->multitouch_activation_threshold / 255.0;
+		config.detection.multitouch_deactivation_threshold = this->multitouch_deactivation_threshold / 255.0;
 
 		using Algorithm = contacts::detection::neutral::Algorithm;
 
@@ -95,9 +99,12 @@ public:
 		else
 			throw common::Error<Error::InvalidNeutralValueAlgorithm> {};
 
-		const f64 nval_offset = this->contacts_neutral_value;
+		const f64 nval_contacts = this->contacts_neutral_value;
+		const f64 nval_multitouch = this->multitouch_neutral_value;
 
-		config.detection.neutral_value_offset = nval_offset / 255.0;
+
+		config.detection.contacts_neutral_offset = nval_contacts / 255.0;
+		config.detection.multitouch_neutral_offset = nval_multitouch / 255.0;
 		config.detection.neutral_value_backoff = 16; // TODO: config option
 
 		const f64 diagonal = std::hypot(this->width, this->height);

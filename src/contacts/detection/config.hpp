@@ -30,7 +30,8 @@ public:
 	 * An offset that is added to the calculated neutral value.
 	 * If neutral_value_algorithm is set to CONSTANT, this defines the neutral value.
 	 */
-	T neutral_value_offset = casts::to<T>(0);
+	T contacts_neutral_offset = casts::to<T>(0);
+	T multitouch_neutral_offset = casts::to<T>(0);
 
 	/*
 	 * How many frames to wait before recalculating the neutral value.
@@ -42,13 +43,14 @@ public:
 	 * If a pixel of the input data is larger than this value plus the neutral value
 	 * it is marked as a contact and a recursive cluster search is started.
 	 */
-	T activation_threshold = casts::to<T>(24);
-
+	T contacts_activation_threshold = casts::to<T>(24);
+	T multitouch_activation_threshold = casts::to<T>(24);
 	/*
 	 * If a pixel of the input data is below this value plus the neutral value,
 	 * the recursive cluster search will stop once it reaches it.
 	 */
-	T deactivation_threshold = casts::to<T>(20);
+	T contacts_deactivation_threshold = casts::to<T>(20);
+	T multitouch_deactivation_threshold = casts::to<T>(20);
 };
 
 } // namespace iptsd::contacts::detection

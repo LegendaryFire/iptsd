@@ -176,6 +176,10 @@ private:
 		this->get(ini, "Contacts", "AspectMin", m_config.contacts_aspect_max);
 		this->get(ini, "Contacts", "AspectMax", m_config.contacts_aspect_max);
 
+		this->get(ini, "MultiTouch", "NeutralValue", m_config.multitouch_neutral_value);
+		this->get(ini, "MultiTouch", "ActivationThreshold", m_config.multitouch_activation_threshold);
+		this->get(ini, "MultiTouch", "DeactivationThreshold", m_config.multitouch_deactivation_threshold);
+
 		this->get(ini, "Stylus", "Disable", m_config.stylus_disable);
 		this->get(ini, "Stylus", "TipDistance", m_config.stylus_tip_distance);
 

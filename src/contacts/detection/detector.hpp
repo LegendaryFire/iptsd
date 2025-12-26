@@ -15,9 +15,11 @@
 #include "config.hpp"
 
 #include <common/casts.hpp>
+#include <spdlog/spdlog.h>
 #include <common/types.hpp>
 
 #include <gsl/gsl>
+#include <sys/types.h>
 
 #include <cmath>
 #include <type_traits>
@@ -103,104 +105,116 @@ public:
 				m_input_diagonal = std::hypot(dimensions.x(), dimensions.y());
 		}
 
-		contacts.clear();
-		m_clusters.clear();
-		m_fitting_params.clear();
+		// --------------------------------------------------------------------
+		// Two-pass strategy:
+		//   1) First pass: multi-touch offset (higher neutral) to preserve MT
+		//   2) If it looks like single-touch (<= 1 cluster), recompute neutral
+		//      and re-run with single-touch offset (lower neutral)
+		// --------------------------------------------------------------------
 
-		// Recalculate the neutral value if neccessary
-		if (m_counter == 0) {
+		auto run_pass = [&](T neutral_offset, T activation_threshold, T deactivation_threshold) {
+			contacts.clear();
+			m_clusters.clear();
+			m_fitting_params.clear();
+			m_maximas.clear();
 			m_neutral = neutral::calculate(heatmap,
-			                               m_config.neutral_value_algorithm,
-			                               m_config.neutral_value_offset);
-		}
+										m_config.neutral_value_algorithm,
+										neutral_offset);
 
-		// Update counter
-		m_counter = (m_counter + 1) % m_config.neutral_value_backoff;
+			// Update counter
+			m_counter = (m_counter + 1) % m_config.neutral_value_backoff;
 
-		// Subtract the neutral value from the whole heatmap
-		m_img_neutral = (heatmap - m_neutral).max(casts::to<T>(0));
+			// Subtract the neutral value from the whole heatmap
+			m_img_neutral = (heatmap - m_neutral).max(casts::to<T>(0));
 
-		// Blur the heatmap slightly
-		convolution::run(m_img_neutral, m_kernel_blur, m_img_blurred);
+			// Blur the heatmap slightly
+			convolution::run(m_img_neutral, m_kernel_blur, m_img_blurred);
 
-		const T athresh = m_config.activation_threshold;
-		const T dthresh = m_config.deactivation_threshold;
+			// Search for local maximas
+			maximas::find(m_img_blurred, activation_threshold, m_maximas);
 
-		// Search for local maximas
-		maximas::find(m_img_blurred, athresh, m_maximas);
+			// Iterate over the maximas and start building clusters
+			for (const Point &point : m_maximas) {
+				Box cluster = cluster::span(m_img_blurred, point, activation_threshold, deactivation_threshold);
 
-		// Iterate over the maximas and start building clusters
-		for (const Point &point : m_maximas) {
-			Box cluster = cluster::span(m_img_blurred, point, athresh, dthresh);
+				if (cluster.isEmpty())
+					continue;
 
-			if (cluster.isEmpty())
-				continue;
+				// Extend the sides of the cluster by one pixel
+				cluster.min() = (cluster.min() - one).cwiseMax(0);
+				cluster.max() = (cluster.max() + one).cwiseMin(dimensions);
 
-			// Extend the sides of the cluster by one pixel
-			cluster.min() = (cluster.min() - one).cwiseMax(0);
-			cluster.max() = (cluster.max() + one).cwiseMin(dimensions);
+				// min() and max() are inclusive so we need to add one
+				const Vector2<Eigen::Index> size = cluster.sizes() + one;
 
-			// min() and max() are inclusive so we need to add one
-			const Vector2<Eigen::Index> size = cluster.sizes() + one;
+				// For gaussian fitting, the clusters should have at least 3x3 pixels
+				if (size.x() < 3 || size.y() < 3)
+					continue;
 
-			// For gaussian fitting, the clusters should have at least 3x3 pixels
-			if (size.x() < 3 || size.y() < 3)
-				continue;
-
-			m_clusters.push_back(std::move(cluster));
-		}
-
-		// Merge overlapping clusters
-		overlaps::merge(m_clusters, m_clusters_temp, 5);
-
-		// Prepare clusters for gaussian fitting
-		for (const Box &cluster : m_clusters) {
-			const Vector2<TFit> mean = cluster.cast<TFit>().center();
-			const Matrix2<TFit> prec = Matrix2<TFit>::Identity();
-
-			// min() and max() are inclusive so we need to add one
-			const Vector2<Eigen::Index> size = cluster.sizes() + one;
-
-			gaussian::Parameters<TFit> params {
-				true,
-				1,
-				mean,
-				prec,
-				cluster,
-				Image<TFit> {size.y(), size.x()},
-			};
-
-			m_fitting_params.push_back(std::move(params));
-		}
-
-		// Run gaussian fitting
-		gaussian::fit(m_fitting_params, m_img_blurred, m_fitting_temp, 3);
-
-		// Create a contact from every gaussian fitting parameter
-		for (const auto &p : m_fitting_params) {
-			if (!p.valid)
-				continue;
-
-			const Matrix2<TFit> cov = p.prec.inverse();
-
-			Eigen::SelfAdjointEigenSolver<Matrix2<TFit>> solver {};
-			solver.computeDirect(cov);
-
-			Vector2<TFit> mean = p.mean;
-			Vector2<TFit> size = ellipse::size(solver.eigenvalues());
-			TFit orientation = ellipse::angle<TFit>(solver.eigenvectors());
-
-			// Normalize dimensions.
-			if (m_config.normalize) {
-				mean = mean.cwiseQuotient(dimensions.cast<TFit>());
-				size = (size.array() / m_input_diagonal).matrix();
-				orientation /= gsl::narrow_cast<TFit>(M_PI);
+				m_clusters.push_back(std::move(cluster));
 			}
 
-			contacts.push_back(Contact<T> {mean.template cast<T>(),
-			                               size.template cast<T>(),
-			                               gsl::narrow_cast<T>(orientation),
-			                               m_config.normalize});
+			// Merge overlapping clusters
+			overlaps::merge(m_clusters, m_clusters_temp, 5);
+
+			// Prepare clusters for gaussian fitting
+			for (const Box &cluster : m_clusters) {
+				const Vector2<TFit> mean = cluster.cast<TFit>().center();
+				const Matrix2<TFit> prec = Matrix2<TFit>::Identity();
+
+				// min() and max() are inclusive so we need to add one
+				const Vector2<Eigen::Index> size = cluster.sizes() + one;
+
+				gaussian::Parameters<TFit> params {
+					true,
+					1,
+					mean,
+					prec,
+					cluster,
+					Image<TFit> {size.y(), size.x()},
+				};
+
+				m_fitting_params.push_back(std::move(params));
+			}
+
+			// Run gaussian fitting
+			gaussian::fit(m_fitting_params, m_img_blurred, m_fitting_temp, 3);
+
+			// Create a contact from every gaussian fitting parameter
+			for (const auto &p : m_fitting_params) {
+				if (!p.valid)
+					continue;
+
+				const Matrix2<TFit> cov = p.prec.inverse();
+
+				Eigen::SelfAdjointEigenSolver<Matrix2<TFit>> solver {};
+				solver.computeDirect(cov);
+
+				Vector2<TFit> mean = p.mean;
+				Vector2<TFit> size = ellipse::size(solver.eigenvalues());
+				TFit orientation = ellipse::angle<TFit>(solver.eigenvectors());
+
+				// Normalize dimensions.
+				if (m_config.normalize) {
+					mean = mean.cwiseQuotient(dimensions.cast<TFit>());
+					size = (size.array() / m_input_diagonal).matrix();
+					orientation /= gsl::narrow_cast<TFit>(M_PI);
+				}
+
+				contacts.push_back(Contact<T> {mean.template cast<T>(),
+				                               size.template cast<T>(),
+				                               gsl::narrow_cast<T>(orientation),
+				                               m_config.normalize});
+			}
+		};
+
+		run_pass(m_config.multitouch_neutral_offset, m_config.multitouch_activation_threshold, m_config.multitouch_deactivation_threshold);
+		ulong touch_clusters = m_clusters.size();
+		if (touch_clusters <= 1) {
+			spdlog::info("Using single-touch, {} contacts detected.", touch_clusters);
+			run_pass(m_config.contacts_neutral_offset, m_config.contacts_activation_threshold, m_config.contacts_deactivation_threshold);
+		} else {
+			spdlog::info("Using multi-touch, {} contacts detected.", touch_clusters);
 		}
 	}
 };
