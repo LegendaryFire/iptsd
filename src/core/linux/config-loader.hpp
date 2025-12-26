@@ -175,6 +175,9 @@ private:
 		this->get(ini, "Contacts", "SizeMax", m_config.contacts_size_max);
 		this->get(ini, "Contacts", "AspectMin", m_config.contacts_aspect_max);
 		this->get(ini, "Contacts", "AspectMax", m_config.contacts_aspect_max);
+		this->get(ini, "Contacts", "Algorithm", m_config.contacts_algorithm);
+		this->get(ini, "Contacts", "WatershedKeepRatio", m_config.contacts_watershed_keep_ratio);
+		this->get(ini, "Contacts", "WatershedPalmDiagonalFaction", m_config.contacts_watershed_palm_diagonal_fraction);
 
 		this->get(ini, "Stylus", "Disable", m_config.stylus_disable);
 		this->get(ini, "Stylus", "TipDistance", m_config.stylus_tip_distance);

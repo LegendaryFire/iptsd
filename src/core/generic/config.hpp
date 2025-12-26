@@ -50,6 +50,9 @@ public:
 	f64 contacts_size_max = 2;
 	f64 contacts_aspect_min = 1;
 	f64 contacts_aspect_max = 2.5;
+	std::string contacts_algorithm = "legacy";
+	f64 contacts_watershed_keep_ratio = 0.70;
+	f64 contacts_watershed_palm_diagonal_fraction = 0.28;
 
 	// [Stylus]
 	bool stylus_disable = false;
@@ -84,14 +87,13 @@ public:
 		config.detection.activation_threshold = athresh / 255.0;
 		config.detection.deactivation_threshold = dthresh / 255.0;
 
-		using Algorithm = contacts::detection::neutral::Algorithm;
-
+		using NeutralAlgorithm = contacts::detection::neutral::Algorithm;
 		if (this->contacts_neutral == "mode")
-			config.detection.neutral_value_algorithm = Algorithm::MODE;
+			config.detection.neutral_value_algorithm = NeutralAlgorithm::MODE;
 		else if (this->contacts_neutral == "average")
-			config.detection.neutral_value_algorithm = Algorithm::AVERAGE;
+			config.detection.neutral_value_algorithm = NeutralAlgorithm::AVERAGE;
 		else if (this->contacts_neutral == "constant")
-			config.detection.neutral_value_algorithm = Algorithm::CONSTANT;
+			config.detection.neutral_value_algorithm = NeutralAlgorithm::CONSTANT;
 		else
 			throw common::Error<Error::InvalidNeutralValueAlgorithm> {};
 
@@ -124,6 +126,17 @@ public:
 			this->contacts_orientation_thresh_min / 180,
 			this->contacts_orientation_thresh_max / 180,
 		};
+
+		using DetectAlgorithm = contacts::detection::Algorithm;
+		if (this->contacts_algorithm == "legacy")
+			config.detection.detection_algorithm = DetectAlgorithm::LEGACY;
+		else if (this->contacts_algorithm == "watershed")
+			config.detection.detection_algorithm = DetectAlgorithm::WATERSHED;
+		else
+			throw common::Error<Error::InvalidNeutralValueAlgorithm> {};
+
+		config.detection.watershed_keep_ratio = this->contacts_watershed_keep_ratio;
+		config.detection.watershed_palm_diag_frac = this->contacts_watershed_palm_diagonal_fraction;
 
 		return config;
 	}

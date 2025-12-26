@@ -6,18 +6,19 @@
 #include "../contact.hpp"
 #include "algorithms/cluster.hpp"
 #include "algorithms/convolution.hpp"
-#include "algorithms/ellipse.hpp"
 #include "algorithms/gaussian.hpp"
 #include "algorithms/kernels.hpp"
 #include "algorithms/maximas.hpp"
 #include "algorithms/neutral.hpp"
 #include "algorithms/overlaps.hpp"
+#include "algorithms/watershed.hpp"
 #include "config.hpp"
 
 #include <common/casts.hpp>
 #include <common/types.hpp>
 
 #include <gsl/gsl>
+#include <spdlog/spdlog.h>
 
 #include <cmath>
 #include <type_traits>
@@ -40,7 +41,10 @@ private:
 	// The heatmap with the neutral value subtracted.
 	Image<T> m_img_neutral {};
 
-	// The blurred heatmap.
+	// Heatmap used for maxima + clustering + watershed (unblurred neutral-subtracted heatmap).
+	Image<T> m_img_cluster {};
+
+	// The blurred heatmap (used only for gaussian fitting).
 	Image<T> m_img_blurred {};
 
 	// The kernel that is used for blurring.
@@ -52,7 +56,7 @@ private:
 	// The list of spanned clusters.
 	std::vector<Box> m_clusters {};
 
-	// Temporary storage for cluster spanning.
+	// Temporary storage for cluster merging.
 	std::vector<Box> m_clusters_temp {};
 
 	// Input parameters for gaussian fitting.
@@ -96,6 +100,7 @@ public:
 		// Resize the internal buffers if neccessary.
 		if (brows != rows || bcols != cols) {
 			m_img_neutral.conservativeResize(rows, cols);
+			m_img_cluster.conservativeResize(rows, cols);
 			m_img_blurred.conservativeResize(rows, cols);
 			m_fitting_temp.conservativeResize(rows, cols);
 
@@ -106,6 +111,7 @@ public:
 		contacts.clear();
 		m_clusters.clear();
 		m_fitting_params.clear();
+		m_maximas.clear();
 
 		// Recalculate the neutral value if neccessary
 		if (m_counter == 0) {
@@ -120,18 +126,21 @@ public:
 		// Subtract the neutral value from the whole heatmap
 		m_img_neutral = (heatmap - m_neutral).max(casts::to<T>(0));
 
-		// Blur the heatmap slightly
+		// Unblurred clustering image
+		m_img_cluster = m_img_neutral;
+
+		// Blur only for gaussian fitting
 		convolution::run(m_img_neutral, m_kernel_blur, m_img_blurred);
 
 		const T athresh = m_config.activation_threshold;
 		const T dthresh = m_config.deactivation_threshold;
 
-		// Search for local maximas
-		maximas::find(m_img_blurred, athresh, m_maximas);
+		// Search for local maximas on the same image we use for clustering/splitting
+		maximas::find(m_img_cluster, athresh, m_maximas);
 
-		// Iterate over the maximas and start building clusters
+		// Build initial clusters from the same image (avoid blur bridges)
 		for (const Point &point : m_maximas) {
-			Box cluster = cluster::span(m_img_blurred, point, athresh, dthresh);
+			Box cluster = cluster::span(m_img_cluster, point, athresh, dthresh);
 
 			if (cluster.isEmpty())
 				continue;
@@ -152,13 +161,99 @@ public:
 
 		// Merge overlapping clusters
 		overlaps::merge(m_clusters, m_clusters_temp, 5);
+		
+		std::vector<Box> final_clusters;
 
-		// Prepare clusters for gaussian fitting
-		for (const Box &cluster : m_clusters) {
+		// Watershed split
+		if (m_config.detection_algorithm == Algorithm::WATERSHED) {
+			spdlog::info("Using watershed algorithm. {} keep ratio, {} palm diagonal fraction.", m_config.watershed_keep_ratio, m_config.watershed_palm_diag_frac);
+			final_clusters = {};
+			final_clusters.reserve(m_clusters.size());
+
+			// Only split if the blob has a small number of strong peaks (two-finger case)
+			const usize max_ws_seeds = 3;
+
+			// Palm gate: if bbox diagonal is large, do NOT split (preserve palm heuristics)
+			// Tune 0.20..0.35. Higher => fewer splits on big blobs.
+			const T palm_diag_frac = casts::to<T>(m_config.watershed_palm_diag_frac);
+			const T heatmap_diag = std::hypot(casts::to<T>(dimensions.x()), casts::to<T>(dimensions.y()));
+			const T palm_diag_px = heatmap_diag * palm_diag_frac;
+
+			auto cluster_diag_px = [&](const Box &b) -> T {
+				const auto sz = b.sizes() + one; // inclusive bbox size
+				return std::hypot(casts::to<T>(sz.x()), casts::to<T>(sz.y()));
+			};
+
+			for (const Box &cluster : m_clusters) {
+				// Preserve large blobs as-is (palm-ish)
+				if (cluster_diag_px(cluster) >= palm_diag_px) {
+					final_clusters.push_back(cluster);
+					continue;
+				}
+
+				// Collect maxima inside merged cluster bbox
+				std::vector<Point> seeds {};
+				seeds.reserve(6);
+
+				T peak_max = casts::to<T>(0);
+
+				for (const Point &p : m_maximas) {
+					if (!cluster.contains(p))
+						continue;
+
+					const T v = m_img_cluster(p.y(), p.x());
+					if (v <= athresh)
+						continue;
+
+					peak_max = std::max(peak_max, v);
+					seeds.push_back(p);
+				}
+
+				if (seeds.size() <= 1) {
+					final_clusters.push_back(cluster);
+					continue;
+				}
+
+				// Keep only strong seeds relative to the strongest peak
+				if (peak_max > casts::to<T>(0)) {
+					std::vector<Point> strong {};
+					strong.reserve(seeds.size());
+
+					for (const Point &p : seeds) {
+						const T v = m_img_cluster(p.y(), p.x());
+						if (v >= peak_max * m_config.watershed_keep_ratio)
+							strong.push_back(p);
+					}
+
+					seeds.swap(strong);
+				}
+
+				// Too many strong peaks => likely palm/smear, preserve blob
+				if (seeds.size() <= 1 || seeds.size() > max_ws_seeds) {
+					final_clusters.push_back(cluster);
+					continue;
+				}
+
+				auto splits = watershed::split(m_img_cluster, cluster, seeds, dthresh, 3);
+
+				if (splits.size() < 2) {
+					final_clusters.push_back(cluster);
+					continue;
+				}
+
+				for (auto &b : splits)
+					final_clusters.push_back(std::move(b));
+			}
+		} else {
+			spdlog::info("Skipping watershed algorithm.");
+			final_clusters = m_clusters;
+		}
+
+		// Prepare clusters for gaussian fitting.
+		for (const Box &cluster : final_clusters) {
 			const Vector2<TFit> mean = cluster.cast<TFit>().center();
 			const Matrix2<TFit> prec = Matrix2<TFit>::Identity();
 
-			// min() and max() are inclusive so we need to add one
 			const Vector2<Eigen::Index> size = cluster.sizes() + one;
 
 			gaussian::Parameters<TFit> params {
@@ -174,7 +269,7 @@ public:
 		}
 
 		// Run gaussian fitting
-		gaussian::fit(m_fitting_params, m_img_blurred, m_fitting_temp, 3);
+		gaussian::fit(m_fitting_params, m_img_blurred, m_fitting_temp, 6);
 
 		// Create a contact from every gaussian fitting parameter
 		for (const auto &p : m_fitting_params) {
@@ -187,12 +282,16 @@ public:
 			solver.computeDirect(cov);
 
 			Vector2<TFit> mean = p.mean;
-			Vector2<TFit> size = ellipse::size(solver.eigenvalues());
-			TFit orientation = ellipse::angle<TFit>(solver.eigenvectors());
 
+			Vector2<TFit> size {};
+			size.x() = std::sqrt(solver.eigenvalues().x()) * casts::to<TFit>(2);
+			size.y() = std::sqrt(solver.eigenvalues().y()) * casts::to<TFit>(2);
+
+			TFit orientation = std::atan2(solver.eigenvectors()(1, 1), solver.eigenvectors()(0, 1));
+			
 			// Normalize dimensions.
 			if (m_config.normalize) {
-				mean = mean.cwiseQuotient(dimensions.cast<TFit>());
+				mean = (mean.array() / dimensions.cast<TFit>().array()).matrix();
 				size = (size.array() / m_input_diagonal).matrix();
 				orientation /= gsl::narrow_cast<TFit>(M_PI);
 			}

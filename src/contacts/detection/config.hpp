@@ -9,6 +9,10 @@
 #include <common/types.hpp>
 
 namespace iptsd::contacts::detection {
+enum class Algorithm : u8 {
+	LEGACY,
+	WATERSHED,
+};
 
 template <class T>
 struct Config {
@@ -25,6 +29,11 @@ public:
 	 * How the neutral value of the heatmap is calculated.
 	 */
 	enum neutral::Algorithm neutral_value_algorithm = neutral::Algorithm::MODE;
+
+	/*
+	 * Configuration to enable or disable watershed.
+	 */
+	enum detection::Algorithm detection_algorithm = detection::Algorithm::LEGACY;
 
 	/*
 	 * An offset that is added to the calculated neutral value.
@@ -49,6 +58,16 @@ public:
 	 * the recursive cluster search will stop once it reaches it.
 	 */
 	T deactivation_threshold = casts::to<T>(20);
+
+	/*
+	 * Configuration parameter to fine-tune watershed.
+	 */
+	T watershed_keep_ratio = casts::to<T>(0.70);
+
+	/*
+	 * Configuration parameter to fine-tune watershed.
+	 */
+	T watershed_palm_diag_frac = casts::to<T>(0.25);
 };
 
 } // namespace iptsd::contacts::detection
