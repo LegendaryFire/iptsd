@@ -1,3 +1,12 @@
+iptsd (3.1.1-1) unstable; urgency=medium
+
+  * Forked iptsd for downstream patching/tuning.
+  * Add/adjust contact detection behavior for improved touchpad reliability on
+    Surface Laptop Studio 2 (SLS2).
+  * Packaging-only changes: point metadata (URL) at the fork.
+
+ -- LegendaryFire <tristan.balon@outlook.com>  Fri, 26 Dec 2025 23:00:00 -0800
+
 iptsd (3.0.1-1) unstable; urgency=medium
 
   * iptsd v3.0.1

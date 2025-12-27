@@ -2,12 +2,12 @@
 %global toolchain clang
 
 Name: iptsd
-Version: 3.0.1
+Version: 3.1.1
 Release: 1%{?dist}
 Summary: Userspace daemon for Intel Precise Touch & Stylus
 License: GPLv2+
 
-URL: https://github.com/linux-surface/iptsd
+URL: https://github.com/LegendaryFire/iptsd
 Source: {{{ create_tarball }}}
 
 BuildRequires: meson
@@ -40,6 +40,8 @@ BuildRequires: systemd-rpm-macros
 %description
 iptsd is a userspace daemon that processes touch events from the IPTS
 kernel driver, and sends them back to the kernel using uinput devices.
+
+This build is a fork maintained by LegendaryFire with additional patches/tuning.
 
 %prep
 %autosetup
