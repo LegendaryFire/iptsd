@@ -56,7 +56,7 @@ public:
 	 */
 	usize peak_suppression_radius = 0;
 
-	/* 
+	/*
 	 * The factor in which to darken surrounding pixels when using peak suppression.
 	 * Multiplies neighbors by this factor (e.g., 0.5 = reduce brightness by 50%).
 	 */
