@@ -12,7 +12,7 @@
 
 namespace iptsd::contacts::detection::suppression {
 
-/*
+/*!
  * Darken pixels around each maxima by a constant factor, while leaving maxima pixels unchanged.
  *
  * This is intended to "sharpen" peaks / deepen valleys between peaks so that cluster spanning
