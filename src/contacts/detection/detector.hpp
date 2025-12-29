@@ -137,7 +137,7 @@ public:
 		// Create a suppressed copy used only for cluster spanning
 		const Image<T> *span_src = &m_img_blurred;
 
-		const Eigen::Index suppression_radius = m_config.peak_suppression_radius;
+		const Eigen::Index suppression_radius = casts::to_eigen(m_config.peak_suppression_radius);
 		if (suppression_radius >= 1) {
 			const T suppression_factor = m_config.peak_suppression_factor;
 			suppression::darken_around_maximas(
